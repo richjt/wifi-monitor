@@ -61,7 +61,8 @@ class WiFiMonitor:
         self.results = []
         self.running = False
         self.start_time = None
-        self.airport_path = "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport"
+        # Using wdutil instead of the deprecated airport utility
+        self.wdutil_path = "/usr/bin/wdutil"
         
     def run_command(self, command: List[str]) -> Tuple[str, Optional[str]]:
         """Run a shell command and return stdout and stderr."""
@@ -83,7 +84,7 @@ class WiFiMonitor:
         return "en0"  # Default fallback
     
     def get_current_wifi_info(self) -> Dict[str, Any]:
-        """Get current WiFi information including SSID, RSSI, and transmission rates."""
+        """Get current WiFi information including SSID, RSSI, and transmission rates using wdutil."""
         interface = self.get_wifi_interface()
         info = {
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -94,28 +95,52 @@ class WiFiMonitor:
             "connected": False
         }
         
-        # Get SSID
+        # First check if connected using networksetup
         stdout, _ = self.run_command(["networksetup", "-getairportnetwork", interface])
         ssid_match = re.search(r"Current Wi-Fi Network: (.*)", stdout)
         if ssid_match:
             info["ssid"] = ssid_match.group(1)
             info["connected"] = True
         
-        # Get RSSI, noise, and rate
-        stdout, _ = self.run_command([self.airport_path, "-I"])
+        # If not connected via the above method, try wdutil
+        if not info["connected"]:
+            stdout, _ = self.run_command(["sudo", self.wdutil_path, "info"])
+            
+            # Extract SSID from wdutil output
+            ssid_match = re.search(r"SSID\s+: (\S+)", stdout)
+            if ssid_match:
+                info["ssid"] = ssid_match.group(1)
+                info["connected"] = True
         
-        rssi_match = re.search(r"agrCtlRSSI: ([-\d]+)", stdout)
-        if rssi_match:
-            info["rssi_dbm"] = int(rssi_match.group(1))
+        # If connected, get more detailed WiFi information from wdutil
+        if info["connected"]:
+            stdout, _ = self.run_command(["sudo", self.wdutil_path, "info"])
             
-        noise_match = re.search(r"agrCtlNoise: ([-\d]+)", stdout)
-        if noise_match:
-            info["noise_dbm"] = int(noise_match.group(1))
+            # Extract RSSI from wdutil output (look for RSSI or signal strength)
+            rssi_match = re.search(r"RSSI\s+: ([-\d]+)", stdout)
+            if rssi_match:
+                info["rssi_dbm"] = int(rssi_match.group(1))
+            else:
+                # Alternative pattern for signal strength
+                signal_match = re.search(r"Signal\s+: ([-\d]+)", stdout)
+                if signal_match:
+                    info["rssi_dbm"] = int(signal_match.group(1))
             
-        tx_rate_match = re.search(r"lastTxRate: ([\d]+)", stdout)
-        if tx_rate_match:
-            info["tx_rate_mbps"] = int(tx_rate_match.group(1))
+            # Extract noise from wdutil output
+            noise_match = re.search(r"Noise\s+: ([-\d]+)", stdout)
+            if noise_match:
+                info["noise_dbm"] = int(noise_match.group(1))
             
+            # Extract TX rate from wdutil output
+            tx_rate_match = re.search(r"Tx Rate\s+: ([\d.]+)\s*Mbps", stdout)
+            if tx_rate_match:
+                info["tx_rate_mbps"] = float(tx_rate_match.group(1))
+            else:
+                # Alternative pattern for TX rate
+                tx_rate_match = re.search(r"lastTxRate\s+: ([\d.]+)", stdout)
+                if tx_rate_match:
+                    info["tx_rate_mbps"] = float(tx_rate_match.group(1))
+        
         return info
     
     def ping_test(self) -> Dict[str, Any]:
@@ -364,10 +389,10 @@ def main():
                         help="RSSI glitch threshold in dBm (default: -70)")
     args = parser.parse_args()
     
-    # Check if running as root
+    # Emphasize that root privileges are required due to wdutil
     if os.geteuid() != 0:
-        print("WARNING: Some WiFi operations require root privileges.")
-        print("For best results, run this script with sudo.")
+        print("WARNING: This WiFi monitor requires root privileges to use wdutil.")
+        print("Please run this script with sudo for full functionality.")
         proceed = input("Continue anyway? (y/n): ")
         if proceed.lower() != "y":
             return
