@@ -1,0 +1,19 @@
+# WiFi Network Monitor for macOS - Requirements
+# Basic requirements - most should be in Python standard library
+
+# For statistics calculations
+statistics
+
+# For type hints
+typing
+
+# No external dependencies beyond Python standard library
+# The script uses only built-in modules:
+# - subprocess
+# - re
+# - time
+# - datetime
+# - csv
+# - os
+# - signal
+# - argparse
